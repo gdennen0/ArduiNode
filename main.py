@@ -1,0 +1,168 @@
+"""DMX Bridge - Command Line Interface"""
+
+import sys
+import time
+import threading
+from dmx_bridge import DMXBridge
+import config
+
+
+class DMXBridgeCLI:
+    def __init__(self):
+        self.bridge = DMXBridge()
+        self.running = False
+        self.status_thread = None
+        
+    def print_banner(self):
+        """Print startup banner"""
+        print("\n" + "="*60)
+        print("  sACN to DMX Bridge - Command Line Interface")
+        print("="*60)
+        
+    def print_config(self):
+        """Display current configuration"""
+        print("\nConfiguration:")
+        print(f"  Arduino Port:    {config.ARDUINO_PORT} @ {config.ARDUINO_BAUD} baud")
+        print(f"  sACN Universe:   {config.SACN_UNIVERSE}")
+        print(f"  DMX Channels:    {config.DMX_CHANNELS}")
+        print(f"  Target FPS:      {config.DMX_FPS}")
+        print()
+        
+    def start(self):
+        """Start the bridge"""
+        self.print_banner()
+        self.print_config()
+        
+        print("Initializing...")
+        
+        # Connect Arduino
+        if not self.bridge.connect():
+            print("\n✗ Failed to connect to Arduino")
+            print("  Check config.py for correct port settings")
+            return False
+            
+        # Start sACN
+        if not self.bridge.start_sacn():
+            print("\n✗ Failed to start sACN receiver")
+            return False
+            
+        print("\n✓ Bridge started successfully")
+        self.running = True
+        
+        # Start status thread
+        self.status_thread = threading.Thread(target=self.status_loop, daemon=True)
+        self.status_thread.start()
+        
+        return True
+    
+    def status_loop(self):
+        """Background status display"""
+        last_fps = 0
+        last_active = 0
+        last_max = 0
+        
+        while self.running:
+            time.sleep(1)
+            
+            # Get stats
+            fps = self.bridge.get_fps()
+            data = self.bridge.dmx_data
+            active = sum(1 for v in data if v > 0)
+            max_val = max(data) if data else 0
+            
+            # Only print if changed
+            if fps != last_fps or active != last_active or max_val != last_max:
+                status = f"FPS: {fps:2d} | Active Channels: {active:3d}/{config.DMX_CHANNELS} | Max Value: {max_val:3d}"
+                print(f"\r{status}", end='', flush=True)
+                last_fps = fps
+                last_active = active
+                last_max = max_val
+    
+    def print_commands(self):
+        """Print available commands"""
+        print("\n" + "-"*60)
+        print("Commands:")
+        print("  1  - Test: All OFF")
+        print("  2  - Test: First 5 channels @ 255")
+        print("  3  - Test: All @ 50% (128)")
+        print("  4  - Test: All ON (255)")
+        print("  s  - Show current status")
+        print("  c  - Show configuration")
+        print("  q  - Quit")
+        print("-"*60)
+        print()
+    
+    def show_status(self):
+        """Show detailed status"""
+        print("\n" + "="*60)
+        print("Current Status:")
+        print(f"  Arduino:    {'Connected' if self.bridge.ser and self.bridge.ser.is_open else 'Disconnected'}")
+        print(f"  sACN:       {'Listening' if self.bridge.receiver else 'Stopped'}")
+        print(f"  DMX Active: {'Yes' if self.bridge.active else 'No'}")
+        print(f"  FPS:        {self.bridge.get_fps()}")
+        
+        data = self.bridge.dmx_data
+        active = sum(1 for v in data if v > 0)
+        max_val = max(data) if data else 0
+        print(f"  Active Ch:  {active}/{config.DMX_CHANNELS}")
+        print(f"  Max Value:  {max_val}")
+        print("="*60 + "\n")
+    
+    def run(self):
+        """Main command loop"""
+        if not self.start():
+            return
+        
+        self.print_commands()
+        
+        print("Ready for commands (type command or 'q' to quit)...\n")
+        
+        try:
+            while self.running:
+                try:
+                    cmd = input().strip().lower()
+                    
+                    if cmd == 'q':
+                        break
+                    elif cmd == '1':
+                        self.bridge.send_test('all_off')
+                    elif cmd == '2':
+                        self.bridge.send_test('first_5')
+                    elif cmd == '3':
+                        self.bridge.send_test('dim')
+                    elif cmd == '4':
+                        self.bridge.send_test('all_on')
+                    elif cmd == 's':
+                        self.show_status()
+                    elif cmd == 'c':
+                        self.print_config()
+                    elif cmd == '?':
+                        self.print_commands()
+                    elif cmd:
+                        print(f"Unknown command: {cmd}")
+                        
+                except EOFError:
+                    break
+                    
+        except KeyboardInterrupt:
+            pass
+        
+        print("\n\nShutting down...")
+        self.running = False
+        self.bridge.shutdown()
+        print("Goodbye!\n")
+
+
+def main():
+    cli = DMXBridgeCLI()
+    cli.run()
+
+
+if __name__ == '__main__':
+    try:
+        main()
+    except Exception as e:
+        print(f"\nError: {e}")
+        import traceback
+        traceback.print_exc()
+
