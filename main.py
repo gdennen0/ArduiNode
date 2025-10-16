@@ -1,4 +1,8 @@
-"""DMX Bridge - Command Line Interface"""
+"""
+DMX Bridge - Command Line Interface
+
+Simple CLI for controlling the DMX bridge with real-time status monitoring.
+"""
 
 import sys
 import time
@@ -15,17 +19,28 @@ class DMXBridgeCLI:
         
     def print_banner(self):
         """Print startup banner"""
+        protocol_name = config.PROTOCOL.upper()
         print("\n" + "="*60)
-        print("  sACN to DMX Bridge - Command Line Interface")
+        print(f"  {protocol_name} to DMX Bridge - Command Line Interface")
         print("="*60)
         
     def print_config(self):
         """Display current configuration"""
         print("\nConfiguration:")
+        print(f"  Protocol:        {config.PROTOCOL.upper()}")
         print(f"  Arduino Port:    {config.ARDUINO_PORT} @ {config.ARDUINO_BAUD} baud")
-        print(f"  sACN Universe:   {config.SACN_UNIVERSE}")
+
+        if config.PROTOCOL.lower() == "sacn":
+            print(f"  sACN Universe:   {config.SACN_UNIVERSE}")
+        elif config.PROTOCOL.lower() == "artnet":
+            print(f"  ArtNet Universe: {config.ARTNET_UNIVERSE}")
+            print(f"  ArtNet IP:       {config.ARTNET_IP}")
+
         print(f"  DMX Channels:    {config.DMX_CHANNELS}")
-        print(f"  Target FPS:      {config.DMX_FPS}")
+        print(f"  DMX Rate:        {config.DMX_FPS} FPS")
+        print(f"  Output Rate:     {config.OUTPUT_FPS} FPS (2x DMX)")
+        print(f"  Buffer Size:     {config.FRAME_BUFFER_SIZE} frames")
+        print(f"  Performance:     {'Enabled' if config.PERFORMANCE_MONITORING else 'Disabled'}")
         print()
         
     def start(self):
@@ -41,9 +56,9 @@ class DMXBridgeCLI:
             print("  Check config.py for correct port settings")
             return False
             
-        # Start sACN
-        if not self.bridge.start_sacn():
-            print("\n✗ Failed to start sACN receiver")
+        # Start protocol receiver
+        if not self.bridge.start_protocol():
+            print(f"\n✗ Failed to start {config.PROTOCOL.upper()} receiver")
             return False
             
         print("\n✓ Bridge started successfully")
@@ -56,10 +71,11 @@ class DMXBridgeCLI:
         return True
     
     def status_loop(self):
-        """Background status display"""
+        """Background status display with performance monitoring"""
         last_fps = 0
         last_active = 0
         last_max = 0
+        last_drop_rate = 0
         
         while self.running:
             time.sleep(1)
@@ -70,13 +86,20 @@ class DMXBridgeCLI:
             active = sum(1 for v in data if v > 0)
             max_val = max(data) if data else 0
             
+            # Get performance stats
+            stats = self.bridge.get_performance_stats()
+            drop_rate = stats['drop_rate']
+            
             # Only print if changed
-            if fps != last_fps or active != last_active or max_val != last_max:
-                status = f"FPS: {fps:2d} | Active Channels: {active:3d}/{config.DMX_CHANNELS} | Max Value: {max_val:3d}"
+            if (fps != last_fps or active != last_active or max_val != last_max or 
+                abs(drop_rate - last_drop_rate) > 0.1):
+                status = (f"FPS: {fps:2d} | Active: {active:3d}/{config.DMX_CHANNELS} | "
+                         f"Max: {max_val:3d} | Drop: {drop_rate:.1f}%")
                 print(f"\r{status}", end='', flush=True)
                 last_fps = fps
                 last_active = active
                 last_max = max_val
+                last_drop_rate = drop_rate
     
     def print_commands(self):
         """Print available commands"""
@@ -93,19 +116,33 @@ class DMXBridgeCLI:
         print()
     
     def show_status(self):
-        """Show detailed status"""
+        """Show detailed status with performance metrics"""
         print("\n" + "="*60)
         print("Current Status:")
         print(f"  Arduino:    {'Connected' if self.bridge.ser and self.bridge.ser.is_open else 'Disconnected'}")
-        print(f"  sACN:       {'Listening' if self.bridge.receiver else 'Stopped'}")
+
+        protocol_name = config.PROTOCOL.upper()
+        if config.PROTOCOL.lower() == "sacn":
+            receiver_status = 'Listening' if self.bridge.receiver else 'Stopped'
+            print(f"  sACN:       {receiver_status}")
+        elif config.PROTOCOL.lower() == "artnet":
+            receiver_status = 'Listening' if self.bridge.artnet_server else 'Stopped'
+            print(f"  ArtNet:     {receiver_status}")
+
         print(f"  DMX Active: {'Yes' if self.bridge.active else 'No'}")
         print(f"  FPS:        {self.bridge.get_fps()}")
-        
+
         data = self.bridge.dmx_data
         active = sum(1 for v in data if v > 0)
         max_val = max(data) if data else 0
         print(f"  Active Ch:  {active}/{config.DMX_CHANNELS}")
         print(f"  Max Value:  {max_val}")
+
+        # Performance stats
+        stats = self.bridge.get_performance_stats()
+        print(f"  Processed:  {stats['processed_frames']}")
+        print(f"  Dropped:    {stats['dropped_frames']}")
+        print(f"  Drop Rate:  {stats['drop_rate']:.1f}%")
         print("="*60 + "\n")
     
     def run(self):

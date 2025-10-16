@@ -1,5 +1,8 @@
 /*
- * DMX Output - CQRobot Shield using D4 for TX (IO mode) and D2 for direction
+ * DMX Output - Optimized for high-performance reception from Python
+ * 
+ * This Arduino code is simplified to just receive and display DMX data.
+ * All computation is handled by the Python application running at 2x DMX rate.
  *
  * Jumper settings (per CQRobot wiki):
  * - TX jumper: TX-IO position → Digital pin 4
@@ -18,6 +21,10 @@ static const uint16_t DMX_CHANNELS = 512;
 static const uint8_t STATUS_LED = 13;
 static const uint8_t DMX_DIR_PIN = 2;  // RE/DE: HIGH = driver enabled (TX)
 static const uint8_t DMX_TX_PIN = 4;   // Shield TX jumper set to D4
+
+// Performance monitoring
+static uint32_t frames_received = 0;
+static uint32_t last_stats_time = 0;
 
 void setup() {
   pinMode(STATUS_LED, OUTPUT);
@@ -49,26 +56,32 @@ void setup() {
   }
 
   // Ready banner
-  Serial.println("DMX_READY");
+  Serial.println("DMX_READY_OPTIMIZED");
   Serial.println("Channels:512");
   Serial.println("Mode:Pin4_TX");
   Serial.println("USB:Serial@250000");
+  Serial.println("Processing:Python");
 
   digitalWrite(STATUS_LED, HIGH);
   delay(200);
   digitalWrite(STATUS_LED, LOW);
+  
+  // Initialize performance monitoring
+  frames_received = 0;
+  last_stats_time = millis();
 }
 
 void loop() {
-  // Robust non-blocking parser:
-  // Frame = 0xFF, len_lo, len_hi, payload[len]
+  // Optimized high-performance parser for Python-generated frames
+  // Frame format: [0xFF, len_lo, len_hi, payload[len]]
   enum ParserState { WAIT_START, WAIT_LEN_LO, WAIT_LEN_HI, WAIT_PAYLOAD };
   static ParserState state = WAIT_START;
   static uint16_t expectedLen = 0;
   static uint16_t bytesRead = 0;
 
+  // Process all available bytes in one go for maximum performance
   while (Serial.available() > 0) {
-    int byteIn = Serial.read();
+    uint8_t byteIn = Serial.read();
 
     switch (state) {
       case WAIT_START:
@@ -80,14 +93,14 @@ void loop() {
         break;
 
       case WAIT_LEN_LO:
-        expectedLen = (uint8_t)byteIn;
+        expectedLen = byteIn;
         state = WAIT_LEN_HI;
         break;
 
       case WAIT_LEN_HI:
-        expectedLen |= ((uint16_t)(uint8_t)byteIn) << 8;
+        expectedLen |= ((uint16_t)byteIn) << 8;
         if (expectedLen == 0 || expectedLen > DMX_CHANNELS) {
-          // Malformed; resync
+          // Malformed frame; resync
           state = WAIT_START;
         } else {
           bytesRead = 0;
@@ -99,15 +112,25 @@ void loop() {
       case WAIT_PAYLOAD: {
         // Write channel (DMX is 1-indexed)
         uint16_t channel = bytesRead + 1;
-        DmxSimple.write((int)channel, (uint8_t)byteIn);
+        DmxSimple.write((int)channel, byteIn);
         bytesRead++;
+        
         if (bytesRead >= expectedLen) {
-          // Frame complete
+          // Frame complete - update stats
+          frames_received++;
           digitalWrite(STATUS_LED, LOW);
           state = WAIT_START;
         }
         break;
       }
     }
+  }
+  
+  // Print performance stats every 5 seconds
+  uint32_t current_time = millis();
+  if (current_time - last_stats_time >= 5000) {
+    Serial.print("Frames: ");
+    Serial.println(frames_received);
+    last_stats_time = current_time;
   }
 }
